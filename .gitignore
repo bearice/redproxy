@@ -1,4 +1,6 @@
 certs/
 *.js
+*.map
 node_modules
 config.json
+build
