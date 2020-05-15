@@ -19,42 +19,53 @@ function proxySockets(csk: net.Socket, addr: string, port: number) {
     });
     let ctap = csk.pipe(tap('csk'))
     log("CONN[%d | %s:%d] Connection from %s:%d", cid, addr, port, csk.remoteAddress, csk.remotePort)
-    function handleResp(resp: string[], chunk: Buffer) {
-        if (resp[0].match(/^HTTP\/\d\.\d 200/)) {
-            log("CONN[%d | %s:%d] %s", cid, addr, port, resp[0])
-            if (chunk.length) csk.write(chunk)
-            ctap.pipe(ssk)
-            //let stap = ssk.pipe(tap('ssk'))
-            ssk.pipe(csk)
-            csk.on('error', e => {
-                ssk.end()
-                log("CONN[%d | %s:%d] Client Error: %O", cid, addr, port, e)
-            })
-        } else {
-            log("CONN[%d | %s:%d] Server Connection failed: %s", cid, addr, port, resp[0])
-            csk.end()
+    function onError(msg: string) {
+        log("CONN[%d | %s:%d] Server Connection failed: %s", cid, addr, port, msg)
+        csk.end()
+        ssk.end()
+    }
+    function setupPipe(msg: string, chunk: Buffer) {
+        log("CONN[%d | %s:%d] %s", cid, addr, port, msg)
+        if (chunk.length) csk.write(chunk)
+        ctap.pipe(ssk)
+        //let stap = ssk.pipe(tap('ssk'))
+        ssk.pipe(csk)
+        csk.on('error', e => {
             ssk.end()
+            log("CONN[%d | %s:%d] Client Error: %O", cid, addr, port, e)
+        })
+    }
+    function handleHttpResp(resp: string[], chunk: Buffer) {
+        if (resp[0].match(/^HTTP\/\d\.\d 200/)) {
+            setupPipe(resp[0], chunk)
+        } else {
+            onError(resp[0])
         }
     }
     let resp = new Array<string>()
     let chunk = Buffer.from("");
     function onData(d: Buffer) {
-        chunk = Buffer.concat([chunk, d])
-        let pos = d.indexOf('\r\n')
-        if (pos >= 0) {
-            let line = chunk.slice(0, pos).toString()
-            let rest = chunk.slice(pos + 2)
-            resp.push(line)
-            chunk = Buffer.from("")
-            if (line == '') {
-                ssk.removeListener('data', onData)
-                handleResp(resp, rest)
-            } else {
-                onData(rest)
+        if (config.upstream.proto == 'connect') {
+            chunk = Buffer.concat([chunk, d])
+            let pos = d.indexOf('\r\n')
+            if (pos >= 0) {
+                let line = chunk.slice(0, pos).toString()
+                let rest = chunk.slice(pos + 2)
+                resp.push(line)
+                chunk = Buffer.from("")
+                if (line == '') {
+                    ssk.removeListener('data', onData)
+                    handleHttpResp(resp, rest)
+                } else {
+                    onData(rest)
+                }
             }
+        } else {
+            ssk.removeListener('data', onData)
+            setupPipe("connected", d)
         }
     }
-    function connectSocks() {
+    function connectSocks(): net.Socket {
         return socks.connect({
             host: addr,
             port: port,
@@ -63,20 +74,36 @@ function proxySockets(csk: net.Socket, addr: string, port: number) {
             auths: [socks.auth.None()]
         })
     }
-    function connectHttp() {
-        return tls.connect({
-            host: config.upstream.host,
-            port: config.upstream.port,
-            cert: readFileSync(config.upstream.certs.crt),
-            key: readFileSync(config.upstream.certs.key),
-            ca: [readFileSync(config.upstream.certs.ca)],
-            checkServerIdentity: () => { return null; },
-        }).on('secureConnect', () => {
-            log("CONN[%d | %s:%d] Connection to proxy %s:%d", cid, addr, port, ssk.remoteAddress, ssk.remotePort)
-            ssk.write(`CONNECT ${addr}:${port} HTTP/1.1\r\n\r\n`)
-        })
+    function connectHttp(): net.Socket {
+        if (config.upstream.tls) {
+            return tls.connect({
+                host: config.upstream.host,
+                port: config.upstream.port,
+                cert: readFileSync(config.upstream.certs.crt),
+                key: readFileSync(config.upstream.certs.key),
+                ca: [readFileSync(config.upstream.certs.ca)],
+                checkServerIdentity: () => { return null; },
+            }).on('secureConnect', () => {
+                log("CONN[%d | %s:%d] Connection to proxy %s:%d", cid, addr, port, ssk.remoteAddress, ssk.remotePort)
+                ssk.write(`CONNECT ${addr}:${port} HTTP/1.1\r\n\r\n`)
+            })
+        } else {
+            return net.connect({
+                host: config.upstream.host,
+                port: config.upstream.port,
+            }).on('connect', () => {
+                log("CONN[%d | %s:%d] Connection to proxy %s:%d", cid, addr, port, ssk.remoteAddress, ssk.remotePort)
+                ssk.write(`CONNECT ${addr}:${port} HTTP/1.1\r\n\r\n`)
+            })
+        }
     }
-    let ssk = connectHttp()
+    function connect(): net.Socket {
+        if (config.upstream.proto == 'connect')
+            return connectHttp()
+        else
+            return connectSocks()
+    }
+    let ssk = connect()
     ssk.on('error', (e) => {
         csk.end()
         log("CONN[%d | %s:%d] Server Error: %O", cid, addr, port, e)
