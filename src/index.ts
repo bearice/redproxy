@@ -26,14 +26,14 @@ function proxySockets(csk: net.Socket, addr: string, port: number) {
     }
     function setupPipe(msg: string, chunk: Buffer) {
         log("CONN[%d | %s:%d] %s", cid, addr, port, msg)
-        if (chunk.length) csk.write(chunk)
-        ctap.pipe(ssk)
-        //let stap = ssk.pipe(tap('ssk'))
-        ssk.pipe(csk)
         csk.on('error', e => {
             ssk.end()
             log("CONN[%d | %s:%d] Client Error: %O", cid, addr, port, e)
         })
+        if (chunk.length) csk.write(chunk)
+        ctap.pipe(ssk)
+        //let stap = ssk.pipe(tap('ssk'))
+        ssk.pipe(csk)
     }
     function handleHttpResp(resp: string[], chunk: Buffer) {
         if (resp[0].match(/^HTTP\/\d\.\d 200/)) {
@@ -69,8 +69,8 @@ function proxySockets(csk: net.Socket, addr: string, port: number) {
         return socks.connect({
             host: addr,
             port: port,
-            proxyHost: '127.0.0.1',
-            proxyPort: 1080,
+            proxyHost: config.upstream.host,
+            proxyPort: config.upstream.port,
             auths: [socks.auth.None()]
         })
     }
