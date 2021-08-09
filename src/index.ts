@@ -4,13 +4,22 @@ import { get_original_dst } from './sockopt';
 import { readFileSync } from 'fs';
 import { Transform } from 'stream';
 
+const util = require('util')
 const socks = require('@heroku/socksv5')
 const config = require('../config')
 
 let connId = 0;
 function proxySockets(csk: net.Socket, addr: string, port: number) {
     let cid = connId++
-    let log = console.info
+    let log = function (raw: string, ...args: any[]) {
+        let msg = util.format(raw, ...args)
+        console.log("CONN[p=%s n=%d s=%s:%d t=%s:%d] %s",
+            process.argv[2] || 'default',
+            cid,
+            csk.remoteAddress, csk.remotePort,
+            addr, port,
+            msg)
+    }
     const tap = (tag: string) => new Transform({
         transform(chunk, encoding, callback) {
             //console.info("CONN[%d] %s %d", cid, tag, chunk.length)
@@ -18,17 +27,17 @@ function proxySockets(csk: net.Socket, addr: string, port: number) {
         }
     });
     let ctap = csk.pipe(tap('csk'))
-    log("CONN[%d | %s:%d] Connection from %s:%d", cid, addr, port, csk.remoteAddress, csk.remotePort)
+    log("Connection from %s:%d", csk.remoteAddress, csk.remotePort)
     function onError(msg: string) {
-        log("CONN[%d | %s:%d] Server Connection failed: %s", cid, addr, port, msg)
+        log("Server Connection failed: %s", msg)
         csk.end()
         ssk.end()
     }
     function setupPipe(msg: string, chunk: Buffer) {
-        log("CONN[%d | %s:%d] %s", cid, addr, port, msg)
+        log("Server response: %s", msg)
         csk.on('error', e => {
             ssk.end()
-            log("CONN[%d | %s:%d] Client Error: %O", cid, addr, port, e)
+            log("Client Error: %O", e)
         })
         if (chunk.length) csk.write(chunk)
         ctap.pipe(ssk)
@@ -84,7 +93,7 @@ function proxySockets(csk: net.Socket, addr: string, port: number) {
                 ca: [readFileSync(config.upstream.certs.ca)],
                 checkServerIdentity: () => { return null; },
             }).on('secureConnect', () => {
-                log("CONN[%d | %s:%d] Connection to proxy %s:%d", cid, addr, port, ssk.remoteAddress, ssk.remotePort)
+                log("Connection to proxy %s:%d", ssk.remoteAddress, ssk.remotePort)
                 ssk.write(`CONNECT ${addr}:${port} HTTP/1.1\r\n\r\n`)
             })
         } else {
@@ -92,7 +101,7 @@ function proxySockets(csk: net.Socket, addr: string, port: number) {
                 host: config.upstream.host,
                 port: config.upstream.port,
             }).on('connect', () => {
-                log("CONN[%d | %s:%d] Connection to proxy %s:%d", cid, addr, port, ssk.remoteAddress, ssk.remotePort)
+                log("Connection to proxy %s:%d", ssk.remoteAddress, ssk.remotePort)
                 ssk.write(`CONNECT ${addr}:${port} HTTP/1.1\r\n\r\n`)
             })
         }
@@ -106,9 +115,9 @@ function proxySockets(csk: net.Socket, addr: string, port: number) {
     let ssk = connect()
     ssk.on('error', (e) => {
         csk.end()
-        log("CONN[%d | %s:%d] Server Error: %O", cid, addr, port, e)
+        log("Server Error: %O", e)
     }).on('end', () => {
-        log("CONN[%d | %s:%d] Connection closed", cid, addr, port)
+        log("Connection closed")
     }).on('data', onData)
 }
 
@@ -117,15 +126,19 @@ const server = net.createServer(csk => {
     proxySockets(csk, client[0], client[1])
 })
 
-server.listen(config.listen.tproxy, '0.0.0.0')
-console.info(`Listening TProxy on ${config.listen.tproxy}`)
+if (config.listen.tproxy) {
+    server.listen(config.listen.tproxy, '0.0.0.0')
+    console.info(`Listening TProxy on ${config.listen.tproxy}`)
+}
 
-const sockServ = socks.createServer({ debug: console.info }, (info: any, accept: Function, _deny: Function) => {
-    let csk = accept(true)
-    proxySockets(csk, info.dstAddr, info.dstPort)
-})
+if (config.listen.socksv5) {
+    const sockServ = socks.createServer({ debug: console.info }, (info: any, accept: Function, _deny: Function) => {
+        let csk = accept(true)
+        proxySockets(csk, info.dstAddr, info.dstPort)
+    })
 
-sockServ.useAuth(socks.auth.UserPassword((_u: any, _p: any, cb: Function) => { cb(true); }));
-sockServ.useAuth(socks.auth.None())
-sockServ.listen(config.listen.socksv5, '0.0.0.0')
-console.info(`Listening SocksV5 on ${config.listen.socksv5}`)
+    sockServ.useAuth(socks.auth.UserPassword((_u: any, _p: any, cb: Function) => { cb(true); }));
+    sockServ.useAuth(socks.auth.None())
+    sockServ.listen(config.listen.socksv5, '0.0.0.0')
+    console.info(`Listening SocksV5 on ${config.listen.socksv5}`)
+}
