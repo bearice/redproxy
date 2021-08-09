@@ -1,5 +1,5 @@
 certs/
-*.js
+build/
 *.map
 node_modules
 *.json

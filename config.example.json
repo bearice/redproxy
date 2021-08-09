@@ -1,0 +1,22 @@
+{
+    "listen": {
+        "tproxy": 12345,
+        "socksv5": 1080
+    },
+    "upstream": {
+        "proto": "connect",
+        "host": "example.com",
+        "port": 443,
+        "tls": true,
+        "certs": {
+            "crt": "certs/proxy.crt",
+            "key": "certs/proxy.key",
+            "ca": "certs/ca.crt"
+        }
+    },
+    "_upstream": {
+        "proto": "socksv5",
+        "host": "127.0.0.1",
+        "port": 2345
+    }
+}
