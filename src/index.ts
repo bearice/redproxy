@@ -126,9 +126,23 @@ const server = net.createServer(csk => {
     proxySockets(csk, client[0], client[1])
 })
 
+function parse_bind_addr(s: any): any {
+    let host = "0.0.0.0"
+    let port = 0
+    if (typeof (s) == 'number') {
+        port = s
+    } else {
+        let t = s.split(":")
+        host = t[0]
+        port = parseInt(t[1])
+    }
+    return { host, port }
+}
+
 if (config.listen.tproxy) {
-    server.listen(config.listen.tproxy, '0.0.0.0')
-    console.info(`Listening TProxy on ${config.listen.tproxy}`)
+    let listen = parse_bind_addr(config.listen.tproxy)
+    server.listen(listen.port, listen.host)
+    console.info(`Listening TProxy on ${listen.host}:${listen.port}`)
 }
 
 if (config.listen.socksv5) {
@@ -139,6 +153,8 @@ if (config.listen.socksv5) {
 
     sockServ.useAuth(socks.auth.UserPassword((_u: any, _p: any, cb: Function) => { cb(true); }));
     sockServ.useAuth(socks.auth.None())
-    sockServ.listen(config.listen.socksv5, '0.0.0.0')
-    console.info(`Listening SocksV5 on ${config.listen.socksv5}`)
+
+    let listen = parse_bind_addr(config.listen.socksv5)
+    sockServ.listen(listen.port, listen.host)
+    console.info(`Listening SocksV5 on ${listen.host}:${listen.port}`)
 }

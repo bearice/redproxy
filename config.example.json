@@ -1,6 +1,6 @@
 {
     "listen": {
-        "tproxy": 12345,
+        "tproxy": "127.0.0.1:12345",
         "socksv5": 1080
     },
     "upstream": {
